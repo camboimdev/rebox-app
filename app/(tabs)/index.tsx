@@ -1,98 +1,171 @@
-import { Image } from 'expo-image';
-import { Platform, StyleSheet } from 'react-native';
+import { useState, useEffect, useCallback } from 'react';
+import { View, Text, StyleSheet, ActivityIndicator } from 'react-native';
+import { router } from 'expo-router';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import { useThemeColor } from '@/hooks/use-theme-color';
+import { useItems } from '@/hooks/use-items';
+import { useMatches } from '@/hooks/use-matches';
+import { SwipeDeck } from '@/components/swipe';
+import { MatchModal } from '@/components/match';
+import { IconSymbol } from '@/components/ui/icon-symbol';
+import { itemService } from '@/services/item-service';
+import type { Item } from '@/types';
 
-import { HelloWave } from '@/components/hello-wave';
-import ParallaxScrollView from '@/components/parallax-scroll-view';
-import { ThemedText } from '@/components/themed-text';
-import { ThemedView } from '@/components/themed-view';
-import { Link } from 'expo-router';
+export default function SwipeFeedScreen() {
+  const backgroundColor = useThemeColor({}, 'background');
+  const textColor = useThemeColor({}, 'text');
+  const textSecondaryColor = useThemeColor({}, 'textSecondary');
+  const tintColor = useThemeColor({}, 'tint');
 
-export default function HomeScreen() {
+  const { feedItems, refreshFeed, isLoading } = useItems();
+  const { likeItem, dislikeItem, pendingMatch, clearPendingMatch } = useMatches();
+
+  const [localFeedItems, setLocalFeedItems] = useState<Item[]>([]);
+  const [matchedItems, setMatchedItems] = useState<Item[]>([]);
+
+  useEffect(() => {
+    setLocalFeedItems(feedItems);
+  }, [feedItems]);
+
+  useEffect(() => {
+    const loadMatchedItems = async () => {
+      if (pendingMatch) {
+        const items = await itemService.getItemsByIds(pendingMatch.itemIds);
+        setMatchedItems(items);
+      }
+    };
+    loadMatchedItems();
+  }, [pendingMatch]);
+
+  const handleSwipeRight = useCallback(
+    async (item: Item) => {
+      // Remove item from local state immediately for smooth UX
+      setLocalFeedItems((prev) => prev.filter((i) => i.id !== item.id));
+
+      try {
+        await likeItem(item);
+      } catch (error) {
+        console.error('Error liking item:', error);
+      }
+    },
+    [likeItem]
+  );
+
+  const handleSwipeLeft = useCallback(
+    async (item: Item) => {
+      // Remove item from local state immediately for smooth UX
+      setLocalFeedItems((prev) => prev.filter((i) => i.id !== item.id));
+
+      try {
+        await dislikeItem(item);
+      } catch (error) {
+        console.error('Error disliking item:', error);
+      }
+    },
+    [dislikeItem]
+  );
+
+  const handleSendMessage = () => {
+    if (pendingMatch) {
+      clearPendingMatch();
+      router.push(`/chat/${pendingMatch.id}`);
+    }
+  };
+
+  const handleKeepSwiping = () => {
+    clearPendingMatch();
+  };
+
+  const renderEmpty = () => (
+    <View style={styles.emptyContainer}>
+      <IconSymbol name="sparkles" size={80} color={textSecondaryColor} />
+      <Text style={[styles.emptyTitle, { color: textColor }]}>
+        Nenhum item disponível
+      </Text>
+      <Text style={[styles.emptySubtitle, { color: textSecondaryColor }]}>
+        Não há mais itens para explorar no momento.{'\n'}
+        Volte mais tarde ou adicione seus próprios itens!
+      </Text>
+    </View>
+  );
+
+  if (isLoading && localFeedItems.length === 0) {
+    return (
+      <SafeAreaView style={[styles.container, styles.centered, { backgroundColor }]}>
+        <ActivityIndicator size="large" color={tintColor} />
+        <Text style={[styles.loadingText, { color: textSecondaryColor }]}>
+          Carregando itens...
+        </Text>
+      </SafeAreaView>
+    );
+  }
+
   return (
-    <ParallaxScrollView
-      headerBackgroundColor={{ light: '#A1CEDC', dark: '#1D3D47' }}
-      headerImage={
-        <Image
-          source={require('@/assets/images/partial-react-logo.png')}
-          style={styles.reactLogo}
-        />
-      }>
-      <ThemedView style={styles.titleContainer}>
-        <ThemedText type="title">Welcome!</ThemedText>
-        <HelloWave />
-      </ThemedView>
-      <ThemedView style={styles.stepContainer}>
-        <ThemedText type="subtitle">Step 1: Try it</ThemedText>
-        <ThemedText>
-          Edit <ThemedText type="defaultSemiBold">app/(tabs)/index.tsx</ThemedText> to see changes.
-          Press{' '}
-          <ThemedText type="defaultSemiBold">
-            {Platform.select({
-              ios: 'cmd + d',
-              android: 'cmd + m',
-              web: 'F12',
-            })}
-          </ThemedText>{' '}
-          to open developer tools.
-        </ThemedText>
-      </ThemedView>
-      <ThemedView style={styles.stepContainer}>
-        <Link href="/modal">
-          <Link.Trigger>
-            <ThemedText type="subtitle">Step 2: Explore</ThemedText>
-          </Link.Trigger>
-          <Link.Preview />
-          <Link.Menu>
-            <Link.MenuAction title="Action" icon="cube" onPress={() => alert('Action pressed')} />
-            <Link.MenuAction
-              title="Share"
-              icon="square.and.arrow.up"
-              onPress={() => alert('Share pressed')}
-            />
-            <Link.Menu title="More" icon="ellipsis">
-              <Link.MenuAction
-                title="Delete"
-                icon="trash"
-                destructive
-                onPress={() => alert('Delete pressed')}
-              />
-            </Link.Menu>
-          </Link.Menu>
-        </Link>
+    <GestureHandlerRootView style={{ flex: 1 }}>
+      <SafeAreaView style={[styles.container, { backgroundColor }]} edges={['top']}>
+        <View style={styles.header}>
+          <Text style={[styles.title, { color: textColor }]}>Descobrir</Text>
+        </View>
 
-        <ThemedText>
-          {`Tap the Explore tab to learn more about what's included in this starter app.`}
-        </ThemedText>
-      </ThemedView>
-      <ThemedView style={styles.stepContainer}>
-        <ThemedText type="subtitle">Step 3: Get a fresh start</ThemedText>
-        <ThemedText>
-          {`When you're ready, run `}
-          <ThemedText type="defaultSemiBold">npm run reset-project</ThemedText> to get a fresh{' '}
-          <ThemedText type="defaultSemiBold">app</ThemedText> directory. This will move the current{' '}
-          <ThemedText type="defaultSemiBold">app</ThemedText> to{' '}
-          <ThemedText type="defaultSemiBold">app-example</ThemedText>.
-        </ThemedText>
-      </ThemedView>
-    </ParallaxScrollView>
+        {localFeedItems.length > 0 ? (
+          <SwipeDeck
+            items={localFeedItems}
+            onSwipeRight={handleSwipeRight}
+            onSwipeLeft={handleSwipeLeft}
+          />
+        ) : (
+          renderEmpty()
+        )}
+
+        <MatchModal
+          visible={!!pendingMatch}
+          match={pendingMatch}
+          items={matchedItems}
+          onSendMessage={handleSendMessage}
+          onKeepSwiping={handleKeepSwiping}
+        />
+      </SafeAreaView>
+    </GestureHandlerRootView>
   );
 }
 
 const styles = StyleSheet.create({
-  titleContainer: {
-    flexDirection: 'row',
+  container: {
+    flex: 1,
+  },
+  centered: {
+    justifyContent: 'center',
     alignItems: 'center',
-    gap: 8,
   },
-  stepContainer: {
-    gap: 8,
-    marginBottom: 8,
+  header: {
+    paddingHorizontal: 16,
+    paddingVertical: 12,
   },
-  reactLogo: {
-    height: 178,
-    width: 290,
-    bottom: 0,
-    left: 0,
-    position: 'absolute',
+  title: {
+    fontSize: 28,
+    fontWeight: 'bold',
+  },
+  loadingText: {
+    marginTop: 16,
+    fontSize: 16,
+  },
+  emptyContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 32,
+  },
+  emptyTitle: {
+    fontSize: 24,
+    fontWeight: '600',
+    marginTop: 24,
+    marginBottom: 12,
+    textAlign: 'center',
+  },
+  emptySubtitle: {
+    fontSize: 16,
+    textAlign: 'center',
+    lineHeight: 24,
   },
 });
