@@ -1,50 +1,200 @@
-# Welcome to your Expo app 👋
+# Rebox
 
-This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
+A modern item trading and marketplace mobile app built with React Native and Expo. Swipe through items, match with other users, and chat to arrange trades—all in a beautiful, intuitive interface.
 
-## Get started
+## Features
 
-1. Install dependencies
+### 🔐 Authentication
+
+- **Email/Password Registration**: Create an account with email and password
+- **Anonymous Login**: Quick access with just a name
+- **Profile Management**: Update your name and profile photo
+
+### 📦 Item Management
+
+- **Add Items**: List your items with photos, descriptions, and categories
+- **Categories**: Organize items by category:
+  - Electronics (Eletrônicos)
+  - Clothing (Roupas)
+  - Furniture (Móveis)
+  - Books (Livros)
+  - Sports (Esportes)
+  - Toys (Brinquedos)
+  - Home (Casa)
+  - Other (Outros)
+- **Manage Your Items**: View, edit, and delete your listed items
+
+### 👆 Swipe & Match
+
+- **Swipe Interface**: Tinder-like card deck for browsing items
+- **Like/Dislike**: Swipe right to like, left to pass
+- **Smart Matching**: Get matched when both users like each other's items
+- **Match Notifications**: Celebrate matches with beautiful animations
+
+### 💬 Chat
+
+- **Real-time Messaging**: Chat with your matches
+- **Match History**: View all your matches sorted by recent activity
+- **Unread Indicators**: See when you have new messages
+
+## Tech Stack
+
+- **Framework**: [Expo](https://expo.dev) ~54.0.31
+- **Runtime**: React Native 0.81.5
+- **Language**: TypeScript
+- **Navigation**: Expo Router (file-based routing)
+- **State Management**: React Context API
+- **Storage**: AsyncStorage (local persistence)
+- **Animations**: React Native Reanimated
+- **Gestures**: React Native Gesture Handler
+- **UI Components**: Custom themed components with dark mode support
+
+## Prerequisites
+
+- Node.js (v18 or higher recommended)
+- npm or yarn
+- Expo CLI (installed globally or via npx)
+- iOS Simulator (for Mac) or Android Emulator, or Expo Go app on your device
+
+## Installation
+
+1. **Clone the repository**
+
+   ```bash
+   git clone <repository-url>
+   cd rebox
+   ```
+
+2. **Install dependencies**
 
    ```bash
    npm install
    ```
 
-2. Start the app
+3. **Start the development server**
 
    ```bash
+   npm start
+   # or
    npx expo start
    ```
 
-In the output, you'll find options to open the app in a
+4. **Run on your preferred platform**
+   - Press `i` for iOS simulator
+   - Press `a` for Android emulator
+   - Scan QR code with Expo Go app on your device
+   - Press `w` for web browser
 
-- [development build](https://docs.expo.dev/develop/development-builds/introduction/)
-- [Android emulator](https://docs.expo.dev/workflow/android-studio-emulator/)
-- [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
-- [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
+## Available Scripts
 
-You can start developing by editing the files inside the **app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
+- `npm start` - Start the Expo development server
+- `npm run android` - Start the app on Android emulator
+- `npm run ios` - Start the app on iOS simulator
+- `npm run web` - Start the app in web browser
+- `npm run lint` - Run ESLint to check code quality
+- `npm run reset-project` - Reset to a blank project (moves current code to `app-example`)
 
-## Get a fresh project
+## Project Structure
 
-When you're ready, run:
-
-```bash
-npm run reset-project
+```
+rebox/
+├── app/                    # Expo Router file-based routes
+│   ├── (auth)/            # Authentication screens
+│   │   ├── login.tsx
+│   │   └── register.tsx
+│   ├── (tabs)/            # Main tab navigation
+│   │   ├── index.tsx      # Swipe feed
+│   │   ├── matches.tsx    # Matches list
+│   │   ├── my-items.tsx   # User's items
+│   │   └── profile.tsx    # User profile
+│   ├── add-item.tsx       # Add new item screen
+│   ├── chat/              # Chat screens
+│   │   └── [matchId].tsx
+│   └── item/              # Item detail screens
+│       └── [itemId].tsx
+├── components/            # Reusable UI components
+│   ├── auth/             # Authentication components
+│   ├── chat/             # Chat components
+│   ├── item/             # Item-related components
+│   ├── match/            # Match components
+│   ├── swipe/            # Swipe deck components
+│   └── ui/               # Generic UI components
+├── contexts/             # React Context providers
+│   ├── auth-context.tsx
+│   ├── items-context.tsx
+│   └── matches-context.tsx
+├── hooks/                # Custom React hooks
+├── services/             # Business logic and data services
+│   ├── auth-service.ts
+│   ├── item-service.ts
+│   ├── match-service.ts
+│   └── storage.ts
+├── types/                # TypeScript type definitions
+├── constants/            # App constants (categories, theme)
+└── utils/                # Utility functions
 ```
 
-This command will move the starter code to the **app-example** directory and create a blank **app** directory where you can start developing.
+## Key Features Implementation
 
-## Learn more
+### Data Persistence
 
-To learn more about developing your project with Expo, look at the following resources:
+All data is stored locally using AsyncStorage. The app uses a service layer pattern to abstract storage operations:
 
-- [Expo documentation](https://docs.expo.dev/): Learn fundamentals, or go into advanced topics with our [guides](https://docs.expo.dev/guides).
-- [Learn Expo tutorial](https://docs.expo.dev/tutorial/introduction/): Follow a step-by-step tutorial where you'll create a project that runs on Android, iOS, and the web.
+- User authentication and profiles
+- Items and categories
+- Likes, dislikes, and matches
+- Messages and chat history
 
-## Join the community
+### Matching Algorithm
 
-Join our community of developers creating universal apps.
+When a user likes an item:
 
-- [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
-- [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
+1. The like is recorded
+2. The system checks if the item's owner has liked any of the current user's items
+3. If both users have liked each other's items, a match is created
+4. Users are notified and can start chatting
+
+### Swipe Interface
+
+Built with React Native Gesture Handler and Reanimated for smooth, native-feeling swipe animations. Cards can be swiped left (dislike) or right (like) with haptic feedback.
+
+## Development
+
+### Adding New Features
+
+1. Create components in the `components/` directory
+2. Add services in the `services/` directory for data operations
+3. Use contexts in `contexts/` for global state management
+4. Create custom hooks in `hooks/` for reusable logic
+
+### Styling
+
+The app uses a theme system with support for light and dark modes. Use the `useThemeColor` hook to access theme colors:
+
+```typescript
+const backgroundColor = useThemeColor({}, "background");
+const textColor = useThemeColor({}, "text");
+```
+
+## Contributing
+
+1. Fork the repository
+2. Create a feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit your changes (`git commit -m 'Add some amazing feature'`)
+4. Push to the branch (`git push origin feature/amazing-feature`)
+5. Open a Pull Request
+
+## License
+
+This project is private and proprietary.
+
+## Learn More
+
+- [Expo Documentation](https://docs.expo.dev/)
+- [React Native Documentation](https://reactnative.dev/)
+- [Expo Router Documentation](https://docs.expo.dev/router/introduction/)
+- [React Native Reanimated](https://docs.swmansion.com/react-native-reanimated/)
+
+---
+
+Built with ❤️ using Expo and React Native
