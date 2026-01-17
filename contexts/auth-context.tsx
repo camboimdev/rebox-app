@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { authService } from '@/services/auth-service';
-import type { User, AuthContextType, LoginCredentials, RegisterData } from '@/types';
+import type { User, AuthContextType } from '@/types';
 
 const AuthContext = createContext<AuthContextType | null>(null);
 
@@ -10,6 +10,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     loadUser();
+
+    // Subscribe to auth state changes
+    const { data: { subscription } } = authService.onAuthStateChange((newUser) => {
+      setUser(newUser);
+      setIsLoading(false);
+    });
+
+    return () => {
+      subscription.unsubscribe();
+    };
   }, []);
 
   const loadUser = async () => {
@@ -23,31 +33,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
-  const login = useCallback(async (credentials: LoginCredentials) => {
+  const loginWithGoogle = useCallback(async () => {
     setIsLoading(true);
     try {
-      const loggedInUser = await authService.login(credentials);
+      const loggedInUser = await authService.signInWithGoogle();
       setUser(loggedInUser);
-    } finally {
-      setIsLoading(false);
-    }
-  }, []);
-
-  const loginAnonymously = useCallback(async (name: string) => {
-    setIsLoading(true);
-    try {
-      const anonymousUser = await authService.loginAnonymously(name);
-      setUser(anonymousUser);
-    } finally {
-      setIsLoading(false);
-    }
-  }, []);
-
-  const register = useCallback(async (data: RegisterData) => {
-    setIsLoading(true);
-    try {
-      const newUser = await authService.register(data);
-      setUser(newUser);
     } finally {
       setIsLoading(false);
     }
@@ -77,9 +67,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     user,
     isLoading,
     isAuthenticated: !!user,
-    login,
-    loginAnonymously,
-    register,
+    loginWithGoogle,
     logout,
     updateProfile,
   };

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect } from 'react';
 import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native';
 import { Stack, useRouter, useSegments } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
@@ -10,31 +10,15 @@ import { AuthProvider, useAuth } from '@/contexts/auth-context';
 import { ItemsProvider } from '@/contexts/items-context';
 import { MatchesProvider } from '@/contexts/matches-context';
 import { Colors } from '@/constants/theme';
-import { seedDemoData } from '@/utils/seed-data';
 
 function RootLayoutNav() {
   const colorScheme = useColorScheme();
   const { isAuthenticated, isLoading } = useAuth();
   const router = useRouter();
   const segments = useSegments();
-  const [isSeeding, setIsSeeding] = useState(true);
-
-  // Seed demo data on first launch
-  useEffect(() => {
-    const initSeedData = async () => {
-      try {
-        await seedDemoData();
-      } catch (error) {
-        console.error('Error seeding demo data:', error);
-      } finally {
-        setIsSeeding(false);
-      }
-    };
-    initSeedData();
-  }, []);
 
   useEffect(() => {
-    if (isLoading || isSeeding) return;
+    if (isLoading) return;
 
     const inAuthGroup = segments[0] === '(auth)';
 
@@ -45,9 +29,9 @@ function RootLayoutNav() {
       // Redirect to home if authenticated and in auth group
       router.replace('/');
     }
-  }, [isAuthenticated, isLoading, isSeeding, segments]);
+  }, [isAuthenticated, isLoading, segments]);
 
-  if (isLoading || isSeeding) {
+  if (isLoading) {
     return (
       <View style={[styles.loading, { backgroundColor: Colors[colorScheme ?? 'light'].background }]}>
         <ActivityIndicator size="large" color={Colors[colorScheme ?? 'light'].tint} />

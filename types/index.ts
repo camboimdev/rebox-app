@@ -67,37 +67,12 @@ export interface Message {
   isRead: boolean;
 }
 
-// ============ STORAGE KEYS ============
-export const STORAGE_KEYS = {
-  CURRENT_USER: '@rebox/current_user',
-  USERS: '@rebox/users',
-  ITEMS: '@rebox/items',
-  LIKES: '@rebox/likes',
-  DISLIKES: '@rebox/dislikes',
-  MATCHES: '@rebox/matches',
-  MESSAGES: '@rebox/messages',
-} as const;
-
-// ============ AUTH TYPES ============
-export interface LoginCredentials {
-  email: string;
-  password: string;
-}
-
-export interface RegisterData {
-  email: string;
-  password: string;
-  name: string;
-}
-
 // ============ CONTEXT TYPES ============
 export interface AuthContextType {
   user: User | null;
   isLoading: boolean;
   isAuthenticated: boolean;
-  login: (credentials: LoginCredentials) => Promise<void>;
-  loginAnonymously: (name: string) => Promise<void>;
-  register: (data: RegisterData) => Promise<void>;
+  loginWithGoogle: () => Promise<void>;
   logout: () => Promise<void>;
   updateProfile: (updates: Partial<Pick<User, 'name' | 'photoUrl'>>) => Promise<void>;
 }

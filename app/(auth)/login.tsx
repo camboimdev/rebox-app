@@ -3,142 +3,85 @@ import {
   View,
   Text,
   StyleSheet,
-  KeyboardAvoidingView,
-  Platform,
-  ScrollView,
   TouchableOpacity,
+  ActivityIndicator,
+  Image,
 } from 'react-native';
-import { Link, router } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useThemeColor } from '@/hooks/use-theme-color';
 import { useAuth } from '@/hooks/use-auth';
-import { AuthInput, AuthButton } from '@/components/auth';
 
 export default function LoginScreen() {
-  const { login, loginAnonymously, isLoading } = useAuth();
+  const { loginWithGoogle, isLoading } = useAuth();
 
   const backgroundColor = useThemeColor({}, 'background');
   const textColor = useThemeColor({}, 'text');
   const textSecondaryColor = useThemeColor({}, 'textSecondary');
   const tintColor = useThemeColor({}, 'tint');
 
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [errors, setErrors] = useState<{ email?: string; password?: string; general?: string }>({});
+  const [error, setError] = useState<string | null>(null);
 
-  const validateForm = () => {
-    const newErrors: typeof errors = {};
-
-    if (!email.trim()) {
-      newErrors.email = 'Email é obrigatório';
-    } else if (!/\S+@\S+\.\S+/.test(email)) {
-      newErrors.email = 'Email inválido';
-    }
-
-    if (!password) {
-      newErrors.password = 'Senha é obrigatória';
-    }
-
-    setErrors(newErrors);
-    return Object.keys(newErrors).length === 0;
-  };
-
-  const handleLogin = async () => {
-    if (!validateForm()) return;
-
+  const handleGoogleLogin = async () => {
+    setError(null);
     try {
-      await login({ email: email.trim(), password });
-    } catch (error) {
-      setErrors({ general: error instanceof Error ? error.message : 'Erro ao fazer login' });
-    }
-  };
-
-  const handleAnonymousLogin = async () => {
-    try {
-      await loginAnonymously('Visitante');
-    } catch (error) {
-      setErrors({ general: error instanceof Error ? error.message : 'Erro ao entrar' });
+      await loginWithGoogle();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Erro ao fazer login com Google');
     }
   };
 
   return (
     <SafeAreaView style={[styles.container, { backgroundColor }]}>
-      <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        style={styles.keyboardView}
-      >
-        <ScrollView
-          contentContainerStyle={styles.scrollContent}
-          keyboardShouldPersistTaps="handled"
-        >
-          <View style={styles.header}>
-            <Text style={[styles.title, { color: textColor }]}>ReBox</Text>
-            <Text style={[styles.subtitle, { color: textSecondaryColor }]}>
-              Troque itens que você não usa mais
-            </Text>
-          </View>
+      <View style={styles.content}>
+        <View style={styles.header}>
+          <Text style={[styles.title, { color: textColor }]}>ReBox</Text>
+          <Text style={[styles.subtitle, { color: textSecondaryColor }]}>
+            Troque itens que você não usa mais
+          </Text>
+        </View>
 
-          <View style={styles.form}>
-            {errors.general && (
-              <View style={styles.errorContainer}>
-                <Text style={styles.errorText}>{errors.general}</Text>
-              </View>
-            )}
-
-            <AuthInput
-              label="Email"
-              placeholder="seu@email.com"
-              value={email}
-              onChangeText={setEmail}
-              error={errors.email}
-              keyboardType="email-address"
-              autoCapitalize="none"
-              autoCorrect={false}
-            />
-
-            <AuthInput
-              label="Senha"
-              placeholder="Sua senha"
-              value={password}
-              onChangeText={setPassword}
-              error={errors.password}
-              secureTextEntry
-            />
-
-            <AuthButton
-              title="Entrar"
-              onPress={handleLogin}
-              loading={isLoading}
-              style={styles.loginButton}
-            />
-
-            <View style={styles.divider}>
-              <View style={[styles.dividerLine, { backgroundColor: textSecondaryColor }]} />
-              <Text style={[styles.dividerText, { color: textSecondaryColor }]}>ou</Text>
-              <View style={[styles.dividerLine, { backgroundColor: textSecondaryColor }]} />
+        <View style={styles.buttonContainer}>
+          {error && (
+            <View style={styles.errorContainer}>
+              <Text style={styles.errorText}>{error}</Text>
             </View>
+          )}
 
-            <AuthButton
-              title="Entrar como visitante"
-              variant="secondary"
-              onPress={handleAnonymousLogin}
-              loading={isLoading}
-            />
-          </View>
+          <TouchableOpacity
+            style={[styles.googleButton, isLoading && styles.googleButtonDisabled]}
+            onPress={handleGoogleLogin}
+            disabled={isLoading}
+            activeOpacity={0.8}
+          >
+            {isLoading ? (
+              <ActivityIndicator size="small" color="#1f1f1f" />
+            ) : (
+              <>
+                <View style={styles.googleIconContainer}>
+                  <GoogleIcon />
+                </View>
+                <Text style={styles.googleButtonText}>Continuar com Google</Text>
+              </>
+            )}
+          </TouchableOpacity>
+        </View>
 
-          <View style={styles.footer}>
-            <Text style={[styles.footerText, { color: textSecondaryColor }]}>
-              Não tem uma conta?{' '}
-            </Text>
-            <Link href="/register" asChild>
-              <TouchableOpacity>
-                <Text style={[styles.linkText, { color: tintColor }]}>Cadastre-se</Text>
-              </TouchableOpacity>
-            </Link>
-          </View>
-        </ScrollView>
-      </KeyboardAvoidingView>
+        <View style={styles.footer}>
+          <Text style={[styles.footerText, { color: textSecondaryColor }]}>
+            Ao continuar, você concorda com nossos{'\n'}
+            Termos de Serviço e Política de Privacidade
+          </Text>
+        </View>
+      </View>
     </SafeAreaView>
+  );
+}
+
+function GoogleIcon() {
+  return (
+    <View style={styles.googleIcon}>
+      <Text style={styles.googleIconText}>G</Text>
+    </View>
   );
 }
 
@@ -146,29 +89,26 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
   },
-  keyboardView: {
+  content: {
     flex: 1,
-  },
-  scrollContent: {
-    flexGrow: 1,
     padding: 24,
     justifyContent: 'center',
   },
   header: {
     alignItems: 'center',
-    marginBottom: 48,
+    marginBottom: 64,
   },
   title: {
-    fontSize: 40,
+    fontSize: 48,
     fontWeight: 'bold',
-    marginBottom: 8,
+    marginBottom: 12,
   },
   subtitle: {
-    fontSize: 16,
+    fontSize: 18,
     textAlign: 'center',
   },
-  form: {
-    marginBottom: 24,
+  buttonContainer: {
+    marginBottom: 48,
   },
   errorContainer: {
     backgroundColor: '#fef2f2',
@@ -181,32 +121,52 @@ const styles = StyleSheet.create({
     fontSize: 14,
     textAlign: 'center',
   },
-  loginButton: {
-    marginTop: 8,
-  },
-  divider: {
+  googleButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginVertical: 24,
+    justifyContent: 'center',
+    backgroundColor: '#ffffff',
+    borderRadius: 24,
+    paddingVertical: 14,
+    paddingHorizontal: 24,
+    borderWidth: 1,
+    borderColor: '#dadce0',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
+    elevation: 2,
   },
-  dividerLine: {
-    flex: 1,
-    height: 1,
+  googleButtonDisabled: {
+    opacity: 0.7,
   },
-  dividerText: {
-    marginHorizontal: 16,
+  googleIconContainer: {
+    marginRight: 12,
+  },
+  googleIcon: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: '#4285f4',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  googleIconText: {
+    color: '#ffffff',
     fontSize: 14,
+    fontWeight: 'bold',
+  },
+  googleButtonText: {
+    color: '#1f1f1f',
+    fontSize: 16,
+    fontWeight: '500',
   },
   footer: {
-    flexDirection: 'row',
-    justifyContent: 'center',
     alignItems: 'center',
   },
   footerText: {
-    fontSize: 14,
-  },
-  linkText: {
-    fontSize: 14,
-    fontWeight: '600',
+    fontSize: 12,
+    textAlign: 'center',
+    lineHeight: 18,
   },
 });

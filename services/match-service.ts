@@ -1,23 +1,58 @@
-import { storage } from './storage';
-import { generateId } from '@/utils/id-generator';
-import type { Like, Dislike, Match, Message } from '@/types';
+import { supabase } from '@/lib/supabase';
+import type { Like, Match, Message } from '@/types';
+import type { RealtimeChannel } from '@supabase/supabase-js';
 
-const LIKES_KEY = '@rebox/likes';
-const DISLIKES_KEY = '@rebox/dislikes';
-const MATCHES_KEY = '@rebox/matches';
-const MESSAGES_KEY = '@rebox/messages';
+// Database row types
+interface DbMatch {
+  id: string;
+  user_a_id: string;
+  user_b_id: string;
+  item_a_id: string;
+  item_b_id: string;
+  created_at: string;
+  last_message_at: string | null;
+}
+
+interface DbMessage {
+  id: string;
+  match_id: string;
+  sender_id: string;
+  text: string;
+  is_read: boolean;
+  created_at: string;
+}
+
+interface DbLike {
+  id: string;
+  from_user_id: string;
+  to_item_id: string;
+  to_user_id: string;
+  created_at: string;
+}
+
+interface MutualLikesResult {
+  has_mutual_likes: boolean;
+  item_a_id: string | null;
+  item_b_id: string | null;
+}
 
 export const matchService = {
   async recordLike(fromUserId: string, toItemId: string, toUserId: string): Promise<Match | null> {
-    const like: Like = {
-      id: generateId(),
-      fromUserId,
-      toItemId,
-      toUserId,
-      createdAt: Date.now(),
-    };
+    // Insert the like
+    const { error: likeError } = await supabase
+      .from('likes')
+      .insert({
+        from_user_id: fromUserId,
+        to_item_id: toItemId,
+        to_user_id: toUserId,
+      } as Partial<DbLike>);
 
-    await storage.appendToArray(LIKES_KEY, like);
+    if (likeError) {
+      // Ignore duplicate likes
+      if (likeError.code !== '23505') {
+        throw new Error(`Failed to record like: ${likeError.message}`);
+      }
+    }
 
     // Check for mutual match
     const match = await this.checkForMatch(fromUserId, toUserId);
@@ -25,116 +60,276 @@ export const matchService = {
   },
 
   async recordDislike(fromUserId: string, toItemId: string): Promise<void> {
-    const dislike: Dislike = {
-      id: generateId(),
-      fromUserId,
-      toItemId,
-      createdAt: Date.now(),
-    };
+    const { error } = await supabase
+      .from('dislikes')
+      .insert({
+        from_user_id: fromUserId,
+        to_item_id: toItemId,
+      } as { from_user_id: string; to_item_id: string });
 
-    await storage.appendToArray(DISLIKES_KEY, dislike);
+    if (error) {
+      // Ignore duplicate dislikes
+      if (error.code !== '23505') {
+        throw new Error(`Failed to record dislike: ${error.message}`);
+      }
+    }
   },
 
   async checkForMatch(userAId: string, userBId: string): Promise<Match | null> {
-    const likes = await storage.getArray<Like>(LIKES_KEY);
-    const matches = await storage.getArray<Match>(MATCHES_KEY);
-
     // Check if they already matched
-    const existingMatch = matches.find(
-      (m) =>
-        (m.userIds[0] === userAId && m.userIds[1] === userBId) ||
-        (m.userIds[0] === userBId && m.userIds[1] === userAId)
-    );
+    const { data: existingMatch } = await supabase
+      .from('matches')
+      .select('*')
+      .or(`and(user_a_id.eq.${userAId},user_b_id.eq.${userBId}),and(user_a_id.eq.${userBId},user_b_id.eq.${userAId})`)
+      .single();
 
-    if (existingMatch) return null;
-
-    // Check if userA liked any item from userB
-    const userALikes = likes.filter((l) => l.fromUserId === userAId && l.toUserId === userBId);
-
-    // Check if userB liked any item from userA
-    const userBLikes = likes.filter((l) => l.fromUserId === userBId && l.toUserId === userAId);
-
-    // If both have liked each other's items, create a match
-    if (userALikes.length > 0 && userBLikes.length > 0) {
-      const match: Match = {
-        id: generateId(),
-        userIds: [userAId, userBId],
-        itemIds: [userBLikes[0].toItemId, userALikes[0].toItemId],
-        createdAt: Date.now(),
-        lastMessageAt: null,
-      };
-
-      await storage.appendToArray(MATCHES_KEY, match);
-      return match;
+    if (existingMatch) {
+      return null; // Already matched
     }
 
-    return null;
+    // Use the database function to check mutual likes
+    const { data: mutualLikesResult, error } = await supabase
+      .rpc('check_mutual_likes', { user_a: userAId, user_b: userBId });
+
+    if (error) {
+      throw new Error(`Failed to check mutual likes: ${error.message}`);
+    }
+
+    const results = mutualLikesResult as MutualLikesResult[] | null;
+    const result = results?.[0];
+
+    if (!result?.has_mutual_likes || !result.item_a_id || !result.item_b_id) {
+      return null;
+    }
+
+    // Create the match
+    const { data: newMatch, error: matchError } = await supabase
+      .from('matches')
+      .insert({
+        user_a_id: userAId,
+        user_b_id: userBId,
+        item_a_id: result.item_a_id,
+        item_b_id: result.item_b_id,
+      } as Partial<DbMatch>)
+      .select()
+      .single();
+
+    if (matchError) {
+      // Ignore duplicate match error
+      if (matchError.code !== '23505') {
+        throw new Error(`Failed to create match: ${matchError.message}`);
+      }
+      return null;
+    }
+
+    return this.mapDbMatchToMatch(newMatch as DbMatch);
   },
 
   async getMatches(userId: string): Promise<Match[]> {
-    const matches = await storage.getArray<Match>(MATCHES_KEY);
-    return matches
-      .filter((m) => m.userIds.includes(userId))
-      .sort((a, b) => (b.lastMessageAt ?? b.createdAt) - (a.lastMessageAt ?? a.createdAt));
+    const { data: matches, error } = await supabase
+      .from('matches')
+      .select('*')
+      .or(`user_a_id.eq.${userId},user_b_id.eq.${userId}`)
+      .order('last_message_at', { ascending: false, nullsFirst: false });
+
+    if (error) {
+      throw new Error(`Failed to get matches: ${error.message}`);
+    }
+
+    return (matches as DbMatch[]).map(this.mapDbMatchToMatch);
   },
 
   async getMatchById(matchId: string): Promise<Match | null> {
-    return storage.findInArray<Match>(MATCHES_KEY, matchId);
+    const { data: match, error } = await supabase
+      .from('matches')
+      .select('*')
+      .eq('id', matchId)
+      .single();
+
+    if (error) {
+      if (error.code === 'PGRST116') {
+        return null;
+      }
+      throw new Error(`Failed to get match: ${error.message}`);
+    }
+
+    return this.mapDbMatchToMatch(match as DbMatch);
   },
 
   async getMessages(matchId: string): Promise<Message[]> {
-    const messages = await storage.getArray<Message>(MESSAGES_KEY);
-    return messages.filter((m) => m.matchId === matchId).sort((a, b) => a.createdAt - b.createdAt);
+    const { data: messages, error } = await supabase
+      .from('messages')
+      .select('*')
+      .eq('match_id', matchId)
+      .order('created_at', { ascending: true });
+
+    if (error) {
+      throw new Error(`Failed to get messages: ${error.message}`);
+    }
+
+    return (messages as DbMessage[]).map(this.mapDbMessageToMessage);
   },
 
   async sendMessage(matchId: string, senderId: string, text: string): Promise<Message> {
-    const message: Message = {
-      id: generateId(),
-      matchId,
-      senderId,
-      text,
-      createdAt: Date.now(),
-      isRead: false,
-    };
+    const { data: message, error } = await supabase
+      .from('messages')
+      .insert({
+        match_id: matchId,
+        sender_id: senderId,
+        text,
+      } as Partial<DbMessage>)
+      .select()
+      .single();
 
-    await storage.appendToArray(MESSAGES_KEY, message);
+    if (error) {
+      throw new Error(`Failed to send message: ${error.message}`);
+    }
+
+    const dbMessage = message as DbMessage;
 
     // Update match lastMessageAt
-    await storage.updateInArray<Match>(MATCHES_KEY, matchId, {
-      lastMessageAt: message.createdAt,
-    });
+    await supabase
+      .from('matches')
+      .update({ last_message_at: dbMessage.created_at } as Partial<DbMatch>)
+      .eq('id', matchId);
 
-    return message;
+    return this.mapDbMessageToMessage(dbMessage);
   },
 
   async markMessagesAsRead(matchId: string, userId: string): Promise<void> {
-    const messages = await storage.getArray<Message>(MESSAGES_KEY);
-    const updatedMessages = messages.map((m) => {
-      if (m.matchId === matchId && m.senderId !== userId && !m.isRead) {
-        return { ...m, isRead: true };
-      }
-      return m;
-    });
-    await storage.set(MESSAGES_KEY, updatedMessages);
+    const { error } = await supabase
+      .from('messages')
+      .update({ is_read: true } as Partial<DbMessage>)
+      .eq('match_id', matchId)
+      .neq('sender_id', userId)
+      .eq('is_read', false);
+
+    if (error) {
+      throw new Error(`Failed to mark messages as read: ${error.message}`);
+    }
   },
 
   async getUnreadCount(userId: string): Promise<number> {
-    const matches = await this.getMatches(userId);
-    const messages = await storage.getArray<Message>(MESSAGES_KEY);
+    // Get user's matches
+    const { data: matches } = await supabase
+      .from('matches')
+      .select('id')
+      .or(`user_a_id.eq.${userId},user_b_id.eq.${userId}`);
 
-    let count = 0;
-    for (const match of matches) {
-      const unread = messages.filter(
-        (m) => m.matchId === match.id && m.senderId !== userId && !m.isRead
-      );
-      count += unread.length;
+    if (!matches || matches.length === 0) {
+      return 0;
     }
 
-    return count;
+    const matchIds = (matches as { id: string }[]).map((m) => m.id);
+
+    // Count unread messages
+    const { count, error } = await supabase
+      .from('messages')
+      .select('*', { count: 'exact', head: true })
+      .in('match_id', matchIds)
+      .neq('sender_id', userId)
+      .eq('is_read', false);
+
+    if (error) {
+      throw new Error(`Failed to get unread count: ${error.message}`);
+    }
+
+    return count || 0;
   },
 
   async getLikes(userId: string): Promise<Like[]> {
-    const likes = await storage.getArray<Like>(LIKES_KEY);
-    return likes.filter((l) => l.fromUserId === userId);
+    const { data: likes, error } = await supabase
+      .from('likes')
+      .select('*')
+      .eq('from_user_id', userId);
+
+    if (error) {
+      throw new Error(`Failed to get likes: ${error.message}`);
+    }
+
+    return (likes as DbLike[]).map(this.mapDbLikeToLike);
+  },
+
+  // Real-time subscriptions
+  subscribeToMessages(
+    matchId: string,
+    onMessage: (message: Message) => void
+  ): RealtimeChannel {
+    return supabase
+      .channel(`messages:${matchId}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'messages',
+          filter: `match_id=eq.${matchId}`,
+        },
+        (payload) => {
+          onMessage(this.mapDbMessageToMessage(payload.new as DbMessage));
+        }
+      )
+      .subscribe();
+  },
+
+  subscribeToMatches(
+    userId: string,
+    onMatch: (match: Match) => void
+  ): RealtimeChannel {
+    return supabase
+      .channel(`matches:${userId}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'matches',
+        },
+        (payload) => {
+          const match = payload.new as DbMatch;
+          if (match.user_a_id === userId || match.user_b_id === userId) {
+            onMatch(this.mapDbMatchToMatch(match));
+          }
+        }
+      )
+      .subscribe();
+  },
+
+  unsubscribe(channel: RealtimeChannel): void {
+    supabase.removeChannel(channel);
+  },
+
+  // Helper mapping functions
+  mapDbMatchToMatch(dbMatch: DbMatch): Match {
+    return {
+      id: dbMatch.id,
+      userIds: [dbMatch.user_a_id, dbMatch.user_b_id],
+      itemIds: [dbMatch.item_a_id, dbMatch.item_b_id],
+      createdAt: new Date(dbMatch.created_at).getTime(),
+      lastMessageAt: dbMatch.last_message_at
+        ? new Date(dbMatch.last_message_at).getTime()
+        : null,
+    };
+  },
+
+  mapDbMessageToMessage(dbMessage: DbMessage): Message {
+    return {
+      id: dbMessage.id,
+      matchId: dbMessage.match_id,
+      senderId: dbMessage.sender_id,
+      text: dbMessage.text,
+      createdAt: new Date(dbMessage.created_at).getTime(),
+      isRead: dbMessage.is_read,
+    };
+  },
+
+  mapDbLikeToLike(dbLike: DbLike): Like {
+    return {
+      id: dbLike.id,
+      fromUserId: dbLike.from_user_id,
+      toItemId: dbLike.to_item_id,
+      toUserId: dbLike.to_user_id,
+      createdAt: new Date(dbLike.created_at).getTime(),
+    };
   },
 };

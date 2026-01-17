@@ -1,131 +1,260 @@
-import { storage } from './storage';
-import { generateId } from '@/utils/id-generator';
-import type { User, LoginCredentials, RegisterData, STORAGE_KEYS } from '@/types';
+import { supabase, getGoogleClientId, googleAuthConfig } from '@/lib/supabase';
+import * as AuthSession from 'expo-auth-session';
+import * as WebBrowser from 'expo-web-browser';
+import * as Crypto from 'expo-crypto';
+import type { User } from '@/types';
 
-const CURRENT_USER_KEY = '@rebox/current_user';
-const USERS_KEY = '@rebox/users';
+// Ensure browser auth session completes properly
+WebBrowser.maybeCompleteAuthSession();
 
-interface StoredUser extends User {
-  passwordHash: string;
-}
+// Discovery document for Google OAuth
+const discovery = {
+  authorizationEndpoint: 'https://accounts.google.com/o/oauth2/v2/auth',
+  tokenEndpoint: 'https://oauth2.googleapis.com/token',
+  revocationEndpoint: 'https://oauth2.googleapis.com/revoke',
+};
 
-// Simple hash for MVP (not secure for production)
-function simpleHash(str: string): string {
-  let hash = 0;
-  for (let i = 0; i < str.length; i++) {
-    const char = str.charCodeAt(i);
-    hash = (hash << 5) - hash + char;
-    hash = hash & hash;
-  }
-  return hash.toString(36);
+// Database row type for users table
+interface DbUser {
+  id: string;
+  email: string;
+  name: string;
+  photo_url: string | null;
+  created_at: string;
+  updated_at: string;
 }
 
 export const authService = {
-  async register(data: RegisterData): Promise<User> {
-    const users = await storage.getArray<StoredUser>(USERS_KEY);
+  async signInWithGoogle(): Promise<User> {
+    // Generate PKCE code verifier and challenge
+    const codeVerifier = Crypto.getRandomBytes(32)
+      .reduce((acc, byte) => acc + byte.toString(16).padStart(2, '0'), '');
 
-    // Check if email already exists
-    const existingUser = users.find((u) => u.email === data.email);
+    const codeChallenge = await Crypto.digestStringAsync(
+      Crypto.CryptoDigestAlgorithm.SHA256,
+      codeVerifier,
+      { encoding: Crypto.CryptoEncoding.BASE64 }
+    ).then((hash) =>
+      hash.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
+    );
+
+    const clientId = getGoogleClientId();
+
+    if (!clientId) {
+      throw new Error('Google Client ID not configured');
+    }
+
+    // Create auth request
+    const request = new AuthSession.AuthRequest({
+      clientId,
+      scopes: ['openid', 'profile', 'email'],
+      redirectUri: googleAuthConfig.redirectUri,
+      codeChallenge,
+      codeChallengeMethod: AuthSession.CodeChallengeMethod.S256,
+      responseType: AuthSession.ResponseType.Code,
+      usePKCE: true,
+    });
+
+    // Prompt user to sign in
+    const result = await request.promptAsync(discovery);
+
+    if (result.type !== 'success') {
+      throw new Error('Google sign-in was cancelled or failed');
+    }
+
+    const { code } = result.params;
+
+    // Exchange code for session with Supabase
+    const { data, error } = await supabase.auth.exchangeCodeForSession(code);
+
+    if (error) {
+      throw new Error(error.message);
+    }
+
+    if (!data.user) {
+      throw new Error('No user returned from authentication');
+    }
+
+    // Create or update user profile in public.users table
+    const user = await this.ensureUserProfile(data.user);
+
+    return user;
+  },
+
+  async ensureUserProfile(authUser: {
+    id: string;
+    email?: string;
+    user_metadata?: {
+      full_name?: string;
+      name?: string;
+      avatar_url?: string;
+      picture?: string;
+    };
+  }): Promise<User> {
+    const email = authUser.email || '';
+    const name = authUser.user_metadata?.full_name ||
+                 authUser.user_metadata?.name ||
+                 email.split('@')[0];
+    const photoUrl = authUser.user_metadata?.avatar_url ||
+                     authUser.user_metadata?.picture ||
+                     null;
+
+    // Check if user profile exists
+    const { data: existingUser } = await supabase
+      .from('users')
+      .select('*')
+      .eq('id', authUser.id)
+      .single();
+
     if (existingUser) {
-      throw new Error('Email já cadastrado');
+      const user = existingUser as DbUser;
+      return {
+        id: user.id,
+        email: user.email,
+        name: user.name,
+        photoUrl: user.photo_url,
+        isAnonymous: false,
+        createdAt: new Date(user.created_at).getTime(),
+        updatedAt: new Date(user.updated_at).getTime(),
+      };
     }
 
-    const now = Date.now();
-    const newUser: StoredUser = {
-      id: generateId(),
-      email: data.email,
-      name: data.name,
-      photoUrl: null,
+    // Create new user profile
+    const { data: newUser, error } = await supabase
+      .from('users')
+      .insert({
+        id: authUser.id,
+        email,
+        name,
+        photo_url: photoUrl,
+      } as DbUser)
+      .select()
+      .single();
+
+    if (error) {
+      throw new Error(`Failed to create user profile: ${error.message}`);
+    }
+
+    const user = newUser as DbUser;
+    return {
+      id: user.id,
+      email: user.email,
+      name: user.name,
+      photoUrl: user.photo_url,
       isAnonymous: false,
-      createdAt: now,
-      updatedAt: now,
-      passwordHash: simpleHash(data.password),
+      createdAt: new Date(user.created_at).getTime(),
+      updatedAt: new Date(user.updated_at).getTime(),
     };
-
-    await storage.appendToArray(USERS_KEY, newUser);
-
-    // Return user without password
-    const { passwordHash, ...user } = newUser;
-    await storage.set(CURRENT_USER_KEY, user);
-
-    return user;
-  },
-
-  async login(credentials: LoginCredentials): Promise<User> {
-    const users = await storage.getArray<StoredUser>(USERS_KEY);
-
-    const storedUser = users.find((u) => u.email === credentials.email);
-    if (!storedUser) {
-      throw new Error('Email não encontrado');
-    }
-
-    if (storedUser.passwordHash !== simpleHash(credentials.password)) {
-      throw new Error('Senha incorreta');
-    }
-
-    const { passwordHash, ...user } = storedUser;
-    await storage.set(CURRENT_USER_KEY, user);
-
-    return user;
-  },
-
-  async loginAnonymously(name: string): Promise<User> {
-    const now = Date.now();
-    const newUser: User = {
-      id: generateId(),
-      email: null,
-      name: name || 'Usuário Anônimo',
-      photoUrl: null,
-      isAnonymous: true,
-      createdAt: now,
-      updatedAt: now,
-    };
-
-    await storage.set(CURRENT_USER_KEY, newUser);
-
-    // Also save to users list for consistency
-    await storage.appendToArray(USERS_KEY, { ...newUser, passwordHash: '' });
-
-    return newUser;
   },
 
   async logout(): Promise<void> {
-    await storage.remove(CURRENT_USER_KEY);
+    const { error } = await supabase.auth.signOut();
+    if (error) {
+      throw new Error(error.message);
+    }
   },
 
   async getCurrentUser(): Promise<User | null> {
-    return storage.get<User>(CURRENT_USER_KEY);
+    const { data: { session } } = await supabase.auth.getSession();
+
+    if (!session?.user) {
+      return null;
+    }
+
+    const { data: userProfile } = await supabase
+      .from('users')
+      .select('*')
+      .eq('id', session.user.id)
+      .single();
+
+    if (!userProfile) {
+      // User is authenticated but profile doesn't exist yet
+      // This might happen during the first login
+      return await this.ensureUserProfile(session.user);
+    }
+
+    const user = userProfile as DbUser;
+    return {
+      id: user.id,
+      email: user.email,
+      name: user.name,
+      photoUrl: user.photo_url,
+      isAnonymous: false,
+      createdAt: new Date(user.created_at).getTime(),
+      updatedAt: new Date(user.updated_at).getTime(),
+    };
   },
 
   async updateProfile(userId: string, updates: Partial<Pick<User, 'name' | 'photoUrl'>>): Promise<User> {
-    const currentUser = await this.getCurrentUser();
-    if (!currentUser || currentUser.id !== userId) {
-      throw new Error('Usuário não encontrado');
+    const { data: { session } } = await supabase.auth.getSession();
+
+    if (!session?.user || session.user.id !== userId) {
+      throw new Error('Usuário não autorizado');
     }
 
-    const updatedUser: User = {
-      ...currentUser,
-      ...updates,
-      updatedAt: Date.now(),
+    const dbUpdates: Partial<DbUser> = {};
+    if (updates.name !== undefined) dbUpdates.name = updates.name;
+    if (updates.photoUrl !== undefined) dbUpdates.photo_url = updates.photoUrl;
+
+    const { data: updatedUser, error } = await supabase
+      .from('users')
+      .update(dbUpdates as DbUser)
+      .eq('id', userId)
+      .select()
+      .single();
+
+    if (error) {
+      throw new Error(`Failed to update profile: ${error.message}`);
+    }
+
+    const user = updatedUser as DbUser;
+    return {
+      id: user.id,
+      email: user.email,
+      name: user.name,
+      photoUrl: user.photo_url,
+      isAnonymous: false,
+      createdAt: new Date(user.created_at).getTime(),
+      updatedAt: new Date(user.updated_at).getTime(),
     };
-
-    await storage.set(CURRENT_USER_KEY, updatedUser);
-
-    // Update in users array too
-    await storage.updateInArray<StoredUser>(USERS_KEY, userId, {
-      ...updates,
-      updatedAt: updatedUser.updatedAt,
-    } as Partial<StoredUser>);
-
-    return updatedUser;
   },
 
   async getUserById(userId: string): Promise<User | null> {
-    const users = await storage.getArray<StoredUser>(USERS_KEY);
-    const user = users.find((u) => u.id === userId);
-    if (!user) return null;
+    const { data: userProfile } = await supabase
+      .from('users')
+      .select('*')
+      .eq('id', userId)
+      .single();
 
-    const { passwordHash, ...userData } = user;
-    return userData;
+    if (!userProfile) {
+      return null;
+    }
+
+    const user = userProfile as DbUser;
+    return {
+      id: user.id,
+      email: user.email,
+      name: user.name,
+      photoUrl: user.photo_url,
+      isAnonymous: false,
+      createdAt: new Date(user.created_at).getTime(),
+      updatedAt: new Date(user.updated_at).getTime(),
+    };
+  },
+
+  // Subscribe to auth state changes
+  onAuthStateChange(callback: (user: User | null) => void) {
+    return supabase.auth.onAuthStateChange(async (event, session) => {
+      if (session?.user) {
+        try {
+          const user = await this.getCurrentUser();
+          callback(user);
+        } catch {
+          callback(null);
+        }
+      } else {
+        callback(null);
+      }
+    });
   },
 };

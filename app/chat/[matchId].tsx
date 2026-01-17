@@ -16,12 +16,12 @@ import { MessageBubble, MessageInput } from '@/components/chat';
 import { matchService } from '@/services/match-service';
 import { authService } from '@/services/auth-service';
 import type { Message, User, Match } from '@/types';
+import type { RealtimeChannel } from '@supabase/supabase-js';
 
 export default function ChatScreen() {
   const { matchId } = useLocalSearchParams<{ matchId: string }>();
 
   const backgroundColor = useThemeColor({}, 'background');
-  const textColor = useThemeColor({}, 'text');
   const textSecondaryColor = useThemeColor({}, 'textSecondary');
   const tintColor = useThemeColor({}, 'tint');
 
@@ -34,6 +34,7 @@ export default function ChatScreen() {
   const [isLoading, setIsLoading] = useState(true);
 
   const flatListRef = useRef<FlatList>(null);
+  const subscriptionRef = useRef<RealtimeChannel | null>(null);
 
   const loadChat = useCallback(async () => {
     if (!matchId || !user) return;
@@ -63,17 +64,43 @@ export default function ChatScreen() {
 
   useEffect(() => {
     loadChat();
-  }, [loadChat]);
+
+    // Subscribe to real-time messages
+    if (matchId) {
+      subscriptionRef.current = matchService.subscribeToMessages(
+        matchId,
+        (newMessage) => {
+          setMessages((prev) => {
+            // Check if message already exists
+            if (prev.some((m) => m.id === newMessage.id)) {
+              return prev;
+            }
+            return [...prev, newMessage];
+          });
+
+          // Mark as read if from other user
+          if (user && newMessage.senderId !== user.id) {
+            matchService.markMessagesAsRead(matchId, user.id).catch(console.error);
+          }
+        }
+      );
+    }
+
+    return () => {
+      // Cleanup subscription
+      if (subscriptionRef.current) {
+        matchService.unsubscribe(subscriptionRef.current);
+        subscriptionRef.current = null;
+      }
+    };
+  }, [loadChat, matchId, user]);
 
   const handleSendMessage = async (text: string) => {
     if (!matchId) return;
 
     try {
       await sendMessage(matchId, text);
-
-      // Reload messages
-      const chatMessages = await matchService.getMessages(matchId);
-      setMessages(chatMessages);
+      // Real-time subscription will handle adding the message
     } catch (error) {
       console.error('Error sending message:', error);
     }

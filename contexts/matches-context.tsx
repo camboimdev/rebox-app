@@ -1,7 +1,8 @@
-import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import { matchService } from '@/services/match-service';
 import { useAuth } from '@/contexts/auth-context';
 import type { Match, Message, Item, MatchesContextType } from '@/types';
+import type { RealtimeChannel } from '@supabase/supabase-js';
 
 const MatchesContext = createContext<MatchesContextType | null>(null);
 
@@ -10,6 +11,9 @@ export function MatchesProvider({ children }: { children: React.ReactNode }) {
   const [matches, setMatches] = useState<Match[]>([]);
   const [pendingMatch, setPendingMatch] = useState<Match | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+
+  // Store subscription reference
+  const matchSubscriptionRef = useRef<RealtimeChannel | null>(null);
 
   const refreshMatches = useCallback(async () => {
     if (!user) return;
@@ -28,10 +32,33 @@ export function MatchesProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (user) {
       refreshMatches();
+
+      // Subscribe to new matches
+      matchSubscriptionRef.current = matchService.subscribeToMatches(
+        user.id,
+        (newMatch) => {
+          setMatches((prev) => {
+            // Check if match already exists
+            if (prev.some((m) => m.id === newMatch.id)) {
+              return prev;
+            }
+            setPendingMatch(newMatch);
+            return [newMatch, ...prev];
+          });
+        }
+      );
     } else {
       setMatches([]);
       setPendingMatch(null);
     }
+
+    return () => {
+      // Cleanup subscription
+      if (matchSubscriptionRef.current) {
+        matchService.unsubscribe(matchSubscriptionRef.current);
+        matchSubscriptionRef.current = null;
+      }
+    };
   }, [user, refreshMatches]);
 
   const likeItem = useCallback(
@@ -42,7 +69,13 @@ export function MatchesProvider({ children }: { children: React.ReactNode }) {
 
       if (match) {
         setPendingMatch(match);
-        setMatches((prev) => [match, ...prev]);
+        setMatches((prev) => {
+          // Check if match already exists (from real-time subscription)
+          if (prev.some((m) => m.id === match.id)) {
+            return prev;
+          }
+          return [match, ...prev];
+        });
       }
 
       return match;
